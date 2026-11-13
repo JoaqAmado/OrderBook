@@ -38,69 +38,72 @@ Orderbook::Orderbook(){}
 
 void Orderbook::add(Order order)
 {   
-    int64_t price = order.getPrice();
-    if (order.getSide() == OrderSide::Buy)
-    {
-        if (bidPriceLevels.find(price) != bidPriceLevels.end())
-        {
-            Order* current = bidPriceLevels[price].tail;
-            bidPriceLevels[price].tail = &order;
-            order.setPrevOrder(current);
-            bidPriceLevels[price].quantity += order.getRemainingQuantity();
-        }else
-        {
-            bidPriceLevels[price] = priceLevel {
-                .price = price,
-                .head = &order,
-                .tail = &order,
-                .quantity = order.getRemainingQuantity()
-            };
-        }
-    }else if (order.getSide() == OrderSide::Sell)
-    {
-        if (askPriceLevels.find(price) != askPriceLevels.end())
-        {
-            Order* current = askPriceLevels[price].tail;
-            askPriceLevels[price].tail = &order;
-            order.setPrevOrder(current);
-            askPriceLevels[price].quantity += order.getRemainingQuantity();
-        }else
-        {
-            askPriceLevels[price] = priceLevel {
-                .price = price,
-                .head = &order,
-                .tail = &order,
-                .quantity = order.getRemainingQuantity()
-            };
-        }
-    }
-    if (order.getType() != OrderType::Market ) orders[order.getID()] = order;
     Orderbook::match(order);
+
+    if (order.getType() == OrderType::Market || order.getRemainingQuantity() == 0)
+        return;
+
+    auto [it, inserted] = orders.emplace(order.getID(), std::move(order));
+    if (!inserted) return;
+    Order* stored = &(it->second);
+
+    auto rest = [stored](auto& levels)
+    {
+        auto [lvlIt, created] = levels.try_emplace(stored->getPrice());
+        priceLevel& level = lvlIt->second;
+
+        if (created)
+        {
+            level.price = stored->getPrice();
+            level.head = stored;
+            level.tail = stored;
+            level.quantity = stored->getRemainingQuantity();
+        }
+        else
+        {
+            level.quantity += stored->getRemainingQuantity();
+            if (!level.head)
+            {
+                level.head = stored;
+                level.tail = stored;
+            }
+            else
+            {
+                level.tail->setNextOrder(stored);
+                stored->setPrevOrder(level.tail);
+                level.tail = stored;
+            }
+        }
+    };
+
+    if (stored->getSide() == OrderSide::Buy) {rest(bidPriceLevels);}
+    else {rest(askPriceLevels);}
 }
 
 void Orderbook::remove(uint64_t orderId)
 {
-        auto& priceLevels = orders[orderId].getSide() == OrderSide::Buy ? bidPriceLevels : askPriceLevels;
+    Order& order = orders.at(orderId);
+    auto& priceLevels = order.getSide() == OrderSide::Buy ? bidPriceLevels : askPriceLevels;
 
-        Order* prevOrder = orders[orderId].getPrevOrder();
-        Order* nextOrder = orders[orderId].getNextOrder();
-        if (prevOrder)
-        {
-            prevOrder->setNextOrder(nextOrder);
-        }else
-        {
-            priceLevels[orders[orderId].getPrice()].head = nextOrder;
-        }
-        
-        if (nextOrder)
-        {
-            nextOrder->setPrevOrder(prevOrder);
-        }else
-        {
-            priceLevels[orders[orderId].getPrice()].tail = prevOrder;
-        }
-        priceLevels[orders[orderId].getPrice()].quantity -= orders[orderId].getRemainingQuantity();
-        orders.erase(orderId);
+    Order* prevOrder = order.getPrevOrder();
+    Order* nextOrder = order.getNextOrder();
+    if (prevOrder)
+    {
+        prevOrder->setNextOrder(nextOrder);
+    }else
+    {
+        priceLevels[order.getPrice()].head = nextOrder;
+    }
+    
+    if (nextOrder)
+    {
+        nextOrder->setPrevOrder(prevOrder);
+    }else
+    {
+        priceLevels[order.getPrice()].tail = prevOrder;
+    }
+    priceLevels[order.getPrice()].quantity -= order.getRemainingQuantity();
+    orders.erase(orderId);
 }
 
 void Orderbook::clearPriceLevel(priceLevel& level)
@@ -118,13 +121,13 @@ void Orderbook::clearPriceLevel(priceLevel& level)
 bool Orderbook::match(Order& order)
 {
     OrderType type = order.getType();
+    auto& levels = order.getSide() == OrderSide::Buy ? bidPriceLevels : askPriceLevels;
+    auto current = levels.begin();
+
     if (order.getSide() == OrderSide::Buy)
     {
-        if (askPriceLevels.empty())
-        {
-            return false;
-        }
-        auto current = askPriceLevels.begin();
+        if (askPriceLevels.empty()) {return false;}
+        
         priceLevel& currentPriceLevel = current->second;
         if (type == OrderType::Market)
         {
@@ -143,11 +146,9 @@ bool Orderbook::match(Order& order)
         }
         else if (type == OrderType::Limit)
         {
-            priceLevel& bidPriceLevel = bidPriceLevels[order.getPrice()];
             while (!askPriceLevels.empty() && currentPriceLevel.quantity <= order.getRemainingQuantity() && currentPriceLevel.price <= order.getPrice())
             {
                 order.fill(currentPriceLevel.quantity);
-                bidPriceLevel.quantity -= currentPriceLevel.quantity;
                 Orderbook::clearPriceLevel(currentPriceLevel);
                 current = askPriceLevels.erase(current);
             }
@@ -156,14 +157,13 @@ bool Orderbook::match(Order& order)
                 return true;
             }
             currentPriceLevel.quantity -= order.getRemainingQuantity();
-            bidPriceLevel.quantity -= order.getRemainingQuantity();
             order.fill(order.getRemainingQuantity());
         }
     }
     else if (order.getSide() == OrderSide::Sell)
     {
         if (!bidPriceLevels.empty()) {return false;}
-        auto current = bidPriceLevels.end();
+
         priceLevel& currentPriceLevel = current->second;
         if (order.getType() == OrderType::Market)
         {
@@ -184,11 +184,9 @@ bool Orderbook::match(Order& order)
         }
         else if (order.getType() == OrderType::Limit)
         {
-            priceLevel& askPriceLevel = askPriceLevels[order.getPrice()];
             while (!bidPriceLevels.empty() && currentPriceLevel.quantity <= order.getRemainingQuantity() && currentPriceLevel.price >= order.getPrice())
             {
                 order.fill(currentPriceLevel.quantity);
-                askPriceLevel.quantity -= currentPriceLevel.quantity;
                 Orderbook::clearPriceLevel(currentPriceLevel);
                 auto prev = current;
                 --current;
@@ -199,7 +197,6 @@ bool Orderbook::match(Order& order)
                 return true;
             }
             currentPriceLevel.quantity -= order.getRemainingQuantity();
-            askPriceLevel.quantity -= order.getRemainingQuantity();
             order.fill(order.getRemainingQuantity());
         }
     }
