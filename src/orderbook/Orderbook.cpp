@@ -35,6 +35,9 @@ void Order::setPrevOrder(Order* order) { prevOrder = order; }
 
 // Orderbook
 Orderbook::Orderbook(){}
+Orderbook::Orderbook(std::unordered_map<uint64_t, Order> orders_, std::map<int64_t, priceLevel> bidPriceLevels_, std::map<int64_t, priceLevel> askPriceLevels_) :
+    orders(orders_), bidPriceLevels(bidPriceLevels_), askPriceLevels(askPriceLevels_)
+{}
 
 void Orderbook::add(Order order)
 {   
@@ -127,7 +130,7 @@ bool Orderbook::match(Order& order)
     if (order.getSide() == OrderSide::Buy)
     {
         if (askPriceLevels.empty()) {return false;}
-        
+
         priceLevel& currentPriceLevel = current->second;
         if (type == OrderType::Market)
         {

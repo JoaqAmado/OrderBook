@@ -15,8 +15,7 @@ enum class OrderSide
 enum class OrderType
 {
     Market,
-    Limit,
-    Stop
+    Limit
 };
 
 class Order
@@ -68,6 +67,7 @@ private:
     
 public:
     Orderbook();
+    Orderbook(std::unordered_map<uint64_t, Order> orders_, std::map<int64_t, priceLevel> bidPriceLevels_, std::map<int64_t, priceLevel> askPriceLevels_);
     void add(Order order);
     void remove(uint64_t orderId);
     void clearPriceLevel(priceLevel& level);
