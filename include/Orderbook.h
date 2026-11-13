@@ -68,7 +68,6 @@ private:
     
 public:
     Orderbook();
-    Orderbook(std::vector<Order> orders_,  std::map<int64_t, priceLevel> bidPriceLevels_, std::map<int64_t, priceLevel> askPriceLevels_);
     void add(Order order);
     void remove(uint64_t orderId);
     void clearPriceLevel(priceLevel& level);
